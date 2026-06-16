@@ -18,7 +18,7 @@ def _load_from_cache(path: str) -> pd.DataFrame | None:
         return df
     return None
 
-# 
+# downloads from y_finance and returns a cleaned table with only the 5 columns or an error if it crashes
 def _download_from_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
     print(f"[fetcher] Downloading {ticker} from {start} to {end} via yfinance...")
     raw = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
@@ -37,13 +37,13 @@ def _download_from_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
     return df
 
 
-
+# creates cache folder if it does not exist and saves the table as a CSV file
 def _save_to_cache(df: pd.DataFrame, path: str) -> None:
     os.makedirs(CACHE_DIR, exist_ok=True)
     df.to_csv(path)
     print(f"[fetcher] Saved to cache: {path}")
 
-
+# returns OHLCV data
 def get_ohlcv(ticker: str, start: str, end: str) -> pd.DataFrame:
     path = _cache_path(ticker, start, end)
 
