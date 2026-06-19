@@ -4,14 +4,14 @@ import yfinance as yf
 from datetime import date
 
 from data.fetcher import get_ohlcv
-from strategies.ma_crossover import generate_signals
+from strategies.registry import STRATEGIES
 from engine.backtest import run_backtest
 from engine.metrics import calculate_metrics, buy_and_hold
 
 st.set_page_config(page_title="BacktestLab", page_icon="📈", layout="wide")
 
 st.title("📈 BacktestLab")
-st.caption("Backtest moving average crossover strategies against historical stock data.")
+st.caption("Backtest trading strategies against historical stock data.")
 
 
 # Looks up the FULL history of a ticker once, just to learn the first and
@@ -65,8 +65,17 @@ with st.sidebar:
 
     st.divider()
 
-    fast_window = st.slider("Fast MA (days)", min_value=5, max_value=100, value=20, step=1)
-    slow_window = st.slider("Slow MA (days)", min_value=10, max_value=300, value=50, step=1)
+    # pick a strategy from the menu, then build that strategy's sliders automatically
+    strategy_name = st.selectbox("Strategy", list(STRATEGIES.keys()))
+    spec = STRATEGIES[strategy_name]
+
+    # collect each slider's value into a params dict, e.g. {"fast_window": 20, "slow_window": 50}
+    params = {}
+    for p in spec["params"]:
+        params[p["name"]] = st.slider(
+            p["label"],
+            min_value=p["min"], max_value=p["max"], value=p["default"], step=p["step"],
+        )
 
     st.divider()
 
@@ -85,9 +94,13 @@ if not run:
     st.info("Configure your strategy in the sidebar and click **Run Backtest** to get started.")
     st.stop()
 
-if fast_window >= slow_window:
-    st.error("Fast MA must be smaller than Slow MA.")
-    st.stop()
+# run this strategy's own validation check, if it has one
+validate = spec.get("validate")
+if validate:
+    error = validate(params)
+    if error:
+        st.error(error)
+        st.stop()
 
 if start_date >= end_date:
     st.error("Start date must be before end date.")
@@ -100,7 +113,7 @@ with st.spinner(f"Fetching data and running backtest for {ticker}..."):
         st.error(f"Could not fetch data for **{ticker}**: {e}")
         st.stop()
 
-    df = generate_signals(df, fast_window=fast_window, slow_window=slow_window)
+    df = spec["func"](df, **params)
     equity_curve, trade_log = run_backtest(df, initial_capital=initial_capital, cost_pct=cost_pct)
     metrics = calculate_metrics(equity_curve, trade_log, initial_capital=initial_capital)
     bah = buy_and_hold(df, initial_capital=initial_capital)
@@ -183,13 +196,17 @@ col_left, col_right = st.columns([1, 2])
 
 with col_left:
     st.subheader("Summary")
+    # build one table row per slider this strategy used (uses each slider's label)
+    param_rows = "".join(
+        f"| **{p['label']}** | {params[p['name']]} |\n" for p in spec["params"]
+    )
     st.markdown(f"""
 | | |
 |---|---|
 | **Ticker** | {ticker} |
 | **Period** | {start_date} → {end_date} |
-| **Fast MA** | {fast_window} days |
-| **Slow MA** | {slow_window} days |
+| **Strategy** | {strategy_name} |
+{param_rows}| **Trading Cost** | {cost_pct * 100:.2f}% |
 | **Initial Capital** | ${initial_capital:,.0f} |
 | **Final Value** | ${equity_curve['Portfolio_Value'].iloc[-1]:,.2f} |
 | **Total Trades** | {metrics['num_trades']} |
