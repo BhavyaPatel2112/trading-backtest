@@ -4,6 +4,7 @@ import yfinance as yf
 from datetime import date
 
 from data.fetcher import get_ohlcv
+from data.stocks import CATEGORIES, filter_stocks
 from strategies.registry import STRATEGIES
 from engine.backtest import run_backtest
 from engine.metrics import calculate_metrics, buy_and_hold
@@ -33,7 +34,20 @@ def get_available_range(ticker: str):
 with st.sidebar:
     st.header("Strategy Settings")
 
-    ticker = st.text_input("Ticker Symbol", value="AAPL").upper().strip()
+    # 1) pick a category to narrow the list (Most Popular, a sector, or All)
+    category = st.selectbox("Category", CATEGORIES, index=0)
+
+    # 2) pick a stock from that filtered, alphabetically-sorted list.
+    # the dropdown is searchable — start typing a name to jump to it.
+    choices = filter_stocks(category)
+    labels = [f"{s['name']} — {s['symbol']}" for s in choices]
+    picked = st.selectbox("Stock", labels)
+    picked_symbol = choices[labels.index(picked)]["symbol"]
+
+    # 3) optional: type any ticker by hand. if filled, it overrides the dropdown.
+    custom = st.text_input("Or enter a custom ticker", value="").upper().strip()
+
+    ticker = custom if custom else picked_symbol
 
     # Find out which dates this ticker actually has data for.
     available = get_available_range(ticker)
