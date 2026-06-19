@@ -1,5 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
+import yfinance as yf
 from datetime import date
 
 from data.fetcher import get_ohlcv
@@ -12,16 +13,55 @@ st.set_page_config(page_title="BacktestLab", page_icon="📈", layout="wide")
 st.title("📈 BacktestLab")
 st.caption("Backtest moving average crossover strategies against historical stock data.")
 
+
+# Looks up the FULL history of a ticker once, just to learn the first and
+# last day data is available for. We use this to bound the date pickers so
+# the user can't pick a future date or a date the stock has no data for.
+# Cached so it only downloads once per ticker.
+@st.cache_data(show_spinner=False)
+def get_available_range(ticker: str):
+    if not ticker:
+        return None
+    try:
+        hist = yf.download(ticker, period="max", auto_adjust=True, progress=False)
+        if hist.empty:
+            return None
+        return hist.index.min().date(), hist.index.max().date()
+    except Exception:
+        return None
+
 with st.sidebar:
     st.header("Strategy Settings")
 
     ticker = st.text_input("Ticker Symbol", value="AAPL").upper().strip()
 
+    # Find out which dates this ticker actually has data for.
+    available = get_available_range(ticker)
+    if available:
+        min_date, max_date = available
+        st.caption(f"Data available: {min_date} → {max_date}")
+    else:
+        # fallback bounds if we couldn't look the ticker up (bad symbol, no network, etc.)
+        min_date, max_date = date(1990, 1, 1), date.today()
+        if ticker:
+            st.warning("Couldn't look up this ticker's date range — check the symbol.")
+
+    # sensible defaults, clamped to stay inside the available range
+    default_start = min(max(date(2020, 1, 1), min_date), max_date)
+    default_end = max_date
+
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("Start Date", value=date(2020, 1, 1))
+        # key includes the ticker so the calendar resets cleanly when the ticker changes
+        start_date = st.date_input(
+            "Start Date", value=default_start,
+            min_value=min_date, max_value=max_date, key=f"start_{ticker}",
+        )
     with col2:
-        end_date = st.date_input("End Date", value=date(2024, 1, 1))
+        end_date = st.date_input(
+            "End Date", value=default_end,
+            min_value=min_date, max_value=max_date, key=f"end_{ticker}",
+        )
 
     st.divider()
 
@@ -31,6 +71,13 @@ with st.sidebar:
     st.divider()
 
     initial_capital = st.number_input("Initial Capital ($)", min_value=1000, max_value=1_000_000, value=10_000, step=1000)
+
+    # trading cost per trade, as a percentage. default 0.1%.
+    cost_pct = st.slider(
+        "Trading Cost per Trade (%)",
+        min_value=0.0, max_value=1.0, value=0.1, step=0.05,
+        help="Cost charged on every buy and sell (commission + slippage). 0.1% is a sensible default.",
+    ) / 100.0
 
     run = st.button("Run Backtest", type="primary", use_container_width=True)
 
@@ -54,7 +101,7 @@ with st.spinner(f"Fetching data and running backtest for {ticker}..."):
         st.stop()
 
     df = generate_signals(df, fast_window=fast_window, slow_window=slow_window)
-    equity_curve, trade_log = run_backtest(df, initial_capital=initial_capital)
+    equity_curve, trade_log = run_backtest(df, initial_capital=initial_capital, cost_pct=cost_pct)
     metrics = calculate_metrics(equity_curve, trade_log, initial_capital=initial_capital)
     bah = buy_and_hold(df, initial_capital=initial_capital)
 
@@ -156,5 +203,6 @@ with col_right:
         display_log = trade_log.copy()
         display_log["Date"] = display_log["Date"].dt.strftime("%Y-%m-%d")
         display_log["Price"] = display_log["Price"].map("${:,.2f}".format)
+        display_log["Cost"] = display_log["Cost"].map("${:,.2f}".format)
         display_log["Cash"] = display_log["Cash"].map("${:,.2f}".format)
         st.dataframe(display_log, use_container_width=True, hide_index=True)
